@@ -42,4 +42,3 @@ export declare function authenticateAsync(options?: LocalAuthenticationOptions):
  * **(Android Only)** Cancels authentication flow.
  */
 export declare function cancelAuthenticate(): Promise<void>;
-//# sourceMappingURL=LocalAuthentication.d.ts.map

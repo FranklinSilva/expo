@@ -37,6 +37,8 @@ class LocalAuthenticationModule(context: Context) : ExportedModule(context), Act
   private var isAuthenticating = false
   private val moduleRegistryDelegate: ModuleRegistryDelegate = ModuleRegistryDelegate()
   private val uIManager: UIManager by moduleRegistry()
+  private lateinit var cryptographyManager: CryptographyManager
+
 
   private inline fun <reified T> moduleRegistry() = moduleRegistryDelegate.getFromModuleRegistry<T>()
 
@@ -56,6 +58,15 @@ class LocalAuthenticationModule(context: Context) : ExportedModule(context), Act
     override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
       isAuthenticating = false
       biometricPrompt = null
+      if(result.cryptoObject == null){
+        val test = ("0")
+        println(test[1])    
+        promise?.resolve(
+          Bundle().apply {
+            putBoolean("success", false)
+          }
+        )
+      }
       promise?.resolve(
         Bundle().apply {
           putBoolean("success", true)
@@ -85,13 +96,14 @@ class LocalAuthenticationModule(context: Context) : ExportedModule(context), Act
   override fun onCreate(moduleRegistry: ModuleRegistry) {
     moduleRegistryDelegate.onCreate(moduleRegistry)
     uIManager.registerActivityEventListener(this)
+    cryptographyManager = CryptographyManager()
   }
 
   @ExpoMethod
   fun supportedAuthenticationTypesAsync(promise: Promise) {
-    val result = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
     val results: MutableList<Int> = ArrayList()
-    if (result == BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE) {
+  
+    if (BiometricManager.from(context).canAuthenticate() == BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE) {
       promise.resolve(results)
       return
     }
@@ -122,14 +134,12 @@ class LocalAuthenticationModule(context: Context) : ExportedModule(context), Act
 
   @ExpoMethod
   fun hasHardwareAsync(promise: Promise) {
-    val result = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
-    promise.resolve(result != BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE)
+    promise.resolve(BiometricManager.from(context).canAuthenticate() != BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE)
   }
 
   @ExpoMethod
   fun isEnrolledAsync(promise: Promise) {
-    val result = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
-    promise.resolve(result == BiometricManager.BIOMETRIC_SUCCESS)
+    promise.resolve(BiometricManager.from(context).canAuthenticate() == BiometricManager.BIOMETRIC_SUCCESS)
   }
 
   @ExpoMethod
@@ -138,8 +148,8 @@ class LocalAuthenticationModule(context: Context) : ExportedModule(context), Act
     if (isDeviceSecure) {
       level = SECURITY_LEVEL_SECRET
     }
-    val result = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
-    if (result == BiometricManager.BIOMETRIC_SUCCESS) {
+
+    if (BiometricManager.from(context).canAuthenticate() == BiometricManager.BIOMETRIC_SUCCESS) {
       level = SECURITY_LEVEL_BIOMETRIC
     }
     promise.resolve(level)
@@ -147,6 +157,11 @@ class LocalAuthenticationModule(context: Context) : ExportedModule(context), Act
 
   @ExpoMethod
   fun authenticateAsync(options: Map<String?, Any?>, promise: Promise) {
+    /*if (!options.containsKey("secretKeyName")) {
+      promise.reject("E_NOT_SUPPORTED", "Cannot display biometric prompt with unsupported method")
+      return
+    }*/
+
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
       promise.reject("E_NOT_SUPPORTED", "Cannot display biometric prompt on android versions below 6.0")
       return
@@ -194,12 +209,12 @@ class LocalAuthenticationModule(context: Context) : ExportedModule(context), Act
         val promptMessage = if (options.containsKey("promptMessage")) {
           options["promptMessage"] as String?
         } else {
-          ""
+          "Aceitar"
         }
         val cancelLabel = if (options.containsKey("cancelLabel")) {
           options["cancelLabel"] as String?
         } else {
-          ""
+          "Cancelar"
         }
         val disableDeviceFallback = if (options.containsKey("disableDeviceFallback")) {
           options["disableDeviceFallback"] as Boolean?
@@ -210,7 +225,7 @@ class LocalAuthenticationModule(context: Context) : ExportedModule(context), Act
         this.promise = promise
         val executor: Executor = Executors.newSingleThreadExecutor()
         biometricPrompt = BiometricPrompt(fragmentActivity, executor, authenticationCallback)
-        val promptInfoBuilder = PromptInfo.Builder()
+        val promptInfoBuilder = BiometricPrompt.PromptInfo.Builder()
         promptMessage?.let {
           promptInfoBuilder.setTitle(it)
         }
@@ -219,14 +234,14 @@ class LocalAuthenticationModule(context: Context) : ExportedModule(context), Act
             promptInfoBuilder.setNegativeButtonText(it)
           }
         } else {
-          promptInfoBuilder.setAllowedAuthenticators(
-            BiometricManager.Authenticators.BIOMETRIC_WEAK
-              or BiometricManager.Authenticators.DEVICE_CREDENTIAL
-          )
+          promptInfoBuilder.setDeviceCredentialAllowed(true)
         }
+
         val promptInfo = promptInfoBuilder.build()
         try {
-          biometricPrompt!!.authenticate(promptInfo)
+          //val cipher = cryptographyManager.getInitializedCipherForEncryption(options.secretKeyName)
+          val cipher = cryptographyManager.getInitializedCipherForEncryption("kinvo")//secretKeyName)
+          biometricPrompt!!.authenticate(promptInfo, BiometricPrompt.CryptoObject(cipher))
         } catch (ex: NullPointerException) {
           promise.reject("E_INTERNAL_ERRROR", "Canceled authentication due to an internal error")
         }
